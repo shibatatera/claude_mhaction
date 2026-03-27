@@ -1274,66 +1274,83 @@ function updateDebug(){
 // ══════════════════════════════════════════════
 // BGM
 // ══════════════════════════════════════════════
-// https://dova-s.jp/bgm/detail/2738
 const BGM = (function(){
-  // Track catalogue
-  const NORMAL_SRC   = 'BGM.ogg';
-  const NODMG_SRCS   = ['BGM_NODMG_A.ogg', 'BGM_NODMG_B.ogg'];
+  const NORMAL_SRC  = 'BGM.ogg';
+  const NODMG_SRCS  = ['BGM_NODMG_A.ogg', 'BGM_NODMG_B.ogg'];
 
-  let currentTrack = null; // { audio, src }
+  let currentSrc  = NORMAL_SRC; // what we WANT to play
+  let currentAudio = null;
   let unlocked = false;
 
-  function makeAudio(src){
+  function makeAndPlay(src){
+    if(currentAudio){
+      currentAudio.pause();
+      currentAudio.src = '';
+    }
     const a = new Audio(src);
     a.loop = true; a.volume = 0.5;
-    return a;
+    a.play().catch(()=>{});
+    currentAudio = a;
+    currentSrc = src;
   }
 
+  // ── Unlock: called synchronously inside the first user gesture ──
+  // We create a fresh Audio here so iOS accepts the .play() call.
   function unlock(){
     if(unlocked) return;
     unlocked = true;
-    if(currentTrack) currentTrack.audio.play().catch(()=>{});
+    makeAndPlay(currentSrc);
   }
 
-  // First interaction unlock
-  document.addEventListener('touchstart', unlock, {once:true});
-  document.addEventListener('mousedown',  unlock, {once:true});
+  // Attach to every interactive element directly, not just document,
+  // so the handler is always synchronous with the gesture on mobile.
+  function attachUnlock(el, evt, opts){
+    el.addEventListener(evt, function h(){
+      unlock();
+      el.removeEventListener(evt, h, opts);
+    }, opts);
+  }
+  // document-level catches canvas drags and any other first touch
+  attachUnlock(document, 'touchstart', {passive:true});
+  attachUnlock(document, 'mousedown',  {});
+  // Belt-and-suspenders: also attach to the joy zone and buttons
+  // (executed after DOM ready since this script is inline at bottom)
+  window.addEventListener('DOMContentLoaded', ()=>{
+    ['joy-zone','btn-a','btn-b'].forEach(id=>{
+      const el=document.getElementById(id);
+      if(el){attachUnlock(el,'touchstart',{passive:true});}
+    });
+  }, {once:true});
 
   function switchTo(src){
-    if(currentTrack && currentTrack.src === src){
-      // Same file already playing — do nothing (continue seamlessly)
+    if(!unlocked){
+      // Not yet unlocked — just store the desired track; unlock() will play it
+      currentSrc = src;
       return;
     }
-    // Stop previous
-    if(currentTrack){
-      currentTrack.audio.pause();
-      currentTrack.audio.src = '';
+    if(currentSrc === src && currentAudio && !currentAudio.paused){
+      // Same track already playing — leave it
+      return;
     }
-    const a = makeAudio(src);
-    currentTrack = {audio: a, src};
-    if(unlocked) a.play().catch(()=>{});
+    makeAndPlay(src);
   }
 
   return {
-    playNormal(){
-      switchTo(NORMAL_SRC);
-    },
+    playNormal(){ switchTo(NORMAL_SRC); },
     playNoDmg(){
       const src = NODMG_SRCS[Math.floor(Math.random() * NODMG_SRCS.length)];
       switchTo(src);
     },
     playNoDmgSameOrRandom(){
-      // If already playing one of the nodmg tracks, keep it; otherwise pick random
-      if(currentTrack && NODMG_SRCS.includes(currentTrack.src)){
-        // already playing a nodmg track — leave it
-        return;
+      if(NODMG_SRCS.includes(currentSrc) && currentAudio && !currentAudio.paused){
+        return; // already playing a nodmg track — keep it
       }
       this.playNoDmg();
     },
   };
 })();
 
-// Start normal BGM on first load
+// Queue normal BGM; will actually start on first user touch/click
 BGM.playNormal();
 
 // ══════════════════════════════════════════════
