@@ -1275,83 +1275,61 @@ function updateDebug(){
 // BGM
 // ══════════════════════════════════════════════
 const BGM = (function(){
-  const NORMAL_SRC  = 'BGM.ogg';
-  const NODMG_SRCS  = ['BGM_NODMG_A.ogg', 'BGM_NODMG_B.ogg'];
+  const NORMAL_SRC = 'BGM.ogg';
+  const NODMG_SRCS = ['BGM_NODMG_A.ogg','BGM_NODMG_B.ogg'];
 
-  let currentSrc  = NORMAL_SRC; // what we WANT to play
-  let currentAudio = null;
-  let unlocked = false;
+  let bgmStarted = false;   // フラグ: 一度でもタッチされたか
+  let wantSrc    = NORMAL_SRC; // 再生したい曲
+  let audio      = null;       // 現在の Audio オブジェクト
+  let currentSrc = '';
 
-  function makeAndPlay(src){
-    if(currentAudio){
-      currentAudio.pause();
-      currentAudio.src = '';
-    }
-    const a = new Audio(src);
-    a.loop = true; a.volume = 0.5;
-    a.play().catch(()=>{});
-    currentAudio = a;
+  // どの曲を流すか決めるだけ（まだ再生しない）
+  function setSrc(src){ wantSrc = src; }
+
+  // 実際に再生 or 切り替え（gesture 内から呼ばれる or フラグ解除後）
+  function applyPlay(src){
+    if(audio && currentSrc === src) return; // 同曲継続
+    if(audio){ audio.pause(); audio.src=''; }
+    audio = new Audio(src);
+    audio.loop = true; audio.volume = 0.5;
+    audio.play().catch(()=>{});
     currentSrc = src;
+    wantSrc    = src;
   }
 
-  // ── Unlock: called synchronously inside the first user gesture ──
-  // We create a fresh Audio here so iOS accepts the .play() call.
-  function unlock(){
-    if(unlocked) return;
-    unlocked = true;
-    makeAndPlay(currentSrc);
+  // ── 一度だけ呼ばれるアンロック関数 ──
+  function onFirstTouch(){
+    if(bgmStarted) return;
+    bgmStarted = true;
+    applyPlay(wantSrc);
   }
 
-  // Attach to every interactive element directly, not just document,
-  // so the handler is always synchronous with the gesture on mobile.
-  function attachUnlock(el, evt, opts){
-    el.addEventListener(evt, function h(){
-      unlock();
-      el.removeEventListener(evt, h, opts);
-    }, opts);
-  }
-  // document-level catches canvas drags and any other first touch
-  attachUnlock(document, 'touchstart', {passive:true});
-  attachUnlock(document, 'mousedown',  {});
-  // Belt-and-suspenders: also attach to the joy zone and buttons
-  // (executed after DOM ready since this script is inline at bottom)
-  window.addEventListener('DOMContentLoaded', ()=>{
-    ['joy-zone','btn-a','btn-b'].forEach(id=>{
-      const el=document.getElementById(id);
-      if(el){attachUnlock(el,'touchstart',{passive:true});}
-    });
-  }, {once:true});
-
-  function switchTo(src){
-    if(!unlocked){
-      // Not yet unlocked — just store the desired track; unlock() will play it
-      currentSrc = src;
-      return;
-    }
-    if(currentSrc === src && currentAudio && !currentAudio.paused){
-      // Same track already playing — leave it
-      return;
-    }
-    makeAndPlay(src);
-  }
+  // document 全体の touchstart / mousedown を捕捉
+  // { passive:true } でスクロールをブロックしない
+  document.addEventListener('touchstart', onFirstTouch, {passive:true});
+  document.addEventListener('mousedown',  onFirstTouch);
 
   return {
-    playNormal(){ switchTo(NORMAL_SRC); },
+    playNormal(){
+      if(!bgmStarted){ setSrc(NORMAL_SRC); return; }
+      applyPlay(NORMAL_SRC);
+    },
     playNoDmg(){
       const src = NODMG_SRCS[Math.floor(Math.random() * NODMG_SRCS.length)];
-      switchTo(src);
+      if(!bgmStarted){ setSrc(src); return; }
+      applyPlay(src);
     },
     playNoDmgSameOrRandom(){
-      if(NODMG_SRCS.includes(currentSrc) && currentAudio && !currentAudio.paused){
-        return; // already playing a nodmg track — keep it
-      }
+      // すでにノーダメージ曲が流れていればそのまま
+      if(bgmStarted && audio && !audio.paused && NODMG_SRCS.includes(currentSrc)) return;
       this.playNoDmg();
     },
   };
 })();
 
-// Queue normal BGM; will actually start on first user touch/click
+// 通常 BGM を「流したい曲」としてセット（実際の再生は最初のタッチ時）
 BGM.playNormal();
+
 
 // ══════════════════════════════════════════════
 // MAIN LOOP
