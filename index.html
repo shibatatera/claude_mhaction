@@ -24,10 +24,18 @@ body{background:#000;overflow:hidden;width:100vw;height:100vh;touch-action:none;
 .btn{position:fixed;border-radius:50%;border:none;cursor:pointer;font-family:monospace;font-weight:bold;font-size:20px;pointer-events:all;display:flex;align-items:center;justify-content:center;user-select:none;-webkit-user-select:none;width:80px;height:80px;}
 #btn-a{bottom:34px;right:34px;background:rgba(239,83,80,.7);border:2px solid rgba(239,83,80,.95);color:#fff;box-shadow:0 0 18px rgba(239,83,80,.45);}
 #btn-b{bottom:114px;right:110px;background:rgba(66,165,245,.7);border:2px solid rgba(66,165,245,.95);color:#fff;box-shadow:0 0 18px rgba(66,165,245,.45);}
-#restart-btn{position:fixed;top:58%;left:50%;transform:translateX(-50%);padding:11px 30px;font-family:monospace;font-size:13px;letter-spacing:3px;background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.3);border-radius:3px;cursor:pointer;display:none;pointer-events:all;}
-#nodmg-btn{position:fixed;top:51%;left:50%;transform:translateX(-50%);padding:9px 22px;font-family:monospace;font-size:11px;letter-spacing:2px;background:rgba(255,80,0,.15);color:#ff9966;border:1px solid rgba(255,100,0,.45);border-radius:3px;cursor:pointer;display:none;pointer-events:all;white-space:nowrap;}
-#nodmg-btn:hover{background:rgba(255,80,0,.28);}
+#title-screen{position:fixed;inset:0;background:linear-gradient(160deg,#0a1520 0%,#18263a 60%,#0d1a10 100%);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:999;pointer-events:all;}
+#title-screen h1{font-family:monospace;font-size:clamp(28px,7vw,56px);letter-spacing:6px;color:#e8c87a;text-shadow:0 0 28px rgba(220,160,40,.65),0 2px 6px rgba(0,0,0,.9);margin-bottom:12px;}
+#title-screen p{font-family:monospace;font-size:clamp(10px,3vw,14px);color:rgba(200,200,180,.45);letter-spacing:3px;margin-bottom:52px;}
+.title-btn{display:block;width:clamp(220px,60vw,320px);padding:16px 0;margin:10px auto;font-family:monospace;font-size:clamp(13px,3.5vw,16px);letter-spacing:3px;border-radius:4px;border:none;cursor:pointer;transition:filter .15s;}
+.title-btn:active{filter:brightness(1.4);}
+#title-start{background:linear-gradient(90deg,#1a5c2e,#2a8a44);color:#c8f0d0;border:1px solid rgba(80,200,100,.4);box-shadow:0 0 18px rgba(40,160,60,.3);}
+#title-nodmg{background:linear-gradient(90deg,#5c1a0a,#9a3010);color:#f0c8b0;border:1px solid rgba(200,80,40,.4);box-shadow:0 0 18px rgba(160,50,20,.3);}
+#title-nodmg-hint{font-family:monospace;font-size:clamp(9px,2.2vw,11px);color:rgba(240,140,80,.55);letter-spacing:1px;margin-top:4px;}
 #ctrl-hint{position:fixed;bottom:8px;left:50%;transform:translateX(-50%);color:rgba(255,255,255,.2);font-size:9px;letter-spacing:1px;pointer-events:none;}
+#restart-btn{position:fixed;top:58%;left:50%;transform:translateX(-50%);padding:11px 30px;font-family:monospace;font-size:13px;letter-spacing:3px;background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.3);border-radius:3px;cursor:pointer;display:none;pointer-events:all;z-index:100;}
+#nodmg-btn{position:fixed;top:51%;left:50%;transform:translateX(-50%);padding:9px 22px;font-family:monospace;font-size:11px;letter-spacing:2px;background:rgba(255,80,0,.15);color:#ff9966;border:1px solid rgba(255,100,0,.45);border-radius:3px;cursor:pointer;display:none;pointer-events:all;white-space:nowrap;z-index:100;}
+#nodmg-btn:hover{background:rgba(255,80,0,.28);}
 #debug-panel{position:fixed;top:8px;right:12px;pointer-events:all;text-align:right;}
 #debug-toggle{display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none;}
 #debug-label{color:rgba(255,255,255,.45);font-size:9px;letter-spacing:1px;}
@@ -58,6 +66,13 @@ body{background:#000;overflow:hidden;width:100vw;height:100vh;touch-action:none;
     <input id="debug-inv-input" type="text" value="0.16">
   </div>
   <div id="state-disp"></div>
+</div>
+<div id="title-screen">
+  <h1>DRAGON HUNT</h1>
+  <p>— 3D ACTION —</p>
+  <button class="title-btn" id="title-start">▶ ゲームスタート</button>
+  <button class="title-btn" id="title-nodmg">★ ノーダメージチャレンジ</button>
+  <div id="title-nodmg-hint">敵の攻撃を1発でも受けると即失敗</div>
 </div>
 <div id="nodmg-btn">[ ノーダメージチャレンジ ]</div>
 <div id="restart-btn">[ RESTART ]</div>
@@ -1278,63 +1293,70 @@ const BGM = (function(){
   const NORMAL_SRC = 'BGM.ogg';
   const NODMG_SRCS = ['BGM_NODMG_A.ogg','BGM_NODMG_B.ogg'];
 
-  let bgmStarted = false;   // フラグ: 一度でもタッチされたか
-  let wantSrc    = NORMAL_SRC; // 再生したい曲
-  let audio      = null;       // 現在の Audio オブジェクト
+  let audio      = null;
   let currentSrc = '';
 
-  // どの曲を流すか決めるだけ（まだ再生しない）
-  function setSrc(src){ wantSrc = src; }
-
-  // 実際に再生 or 切り替え（gesture 内から呼ばれる or フラグ解除後）
-  function applyPlay(src){
-    if(audio && currentSrc === src) return; // 同曲継続
-    if(audio){ audio.pause(); audio.src=''; }
+  function play(src){
+    if(currentSrc === src && audio && !audio.paused) return; // 同曲継続
+    if(audio){ audio.pause(); audio.src = ''; }
     audio = new Audio(src);
     audio.loop = true; audio.volume = 0.5;
     audio.play().catch(()=>{});
     currentSrc = src;
-    wantSrc    = src;
   }
-
-  // ── 一度だけ呼ばれるアンロック関数 ──
-  function onFirstTouch(){
-    if(bgmStarted) return;
-    bgmStarted = true;
-    applyPlay(wantSrc);
-  }
-
-  // document 全体の touchstart / mousedown を捕捉
-  // { passive:true } でスクロールをブロックしない
-  document.addEventListener('touchstart', onFirstTouch, {passive:true});
-  document.addEventListener('mousedown',  onFirstTouch);
 
   return {
-    playNormal(){
-      if(!bgmStarted){ setSrc(NORMAL_SRC); return; }
-      applyPlay(NORMAL_SRC);
-    },
+    playNormal(){ play(NORMAL_SRC); },
     playNoDmg(){
       const src = NODMG_SRCS[Math.floor(Math.random() * NODMG_SRCS.length)];
-      if(!bgmStarted){ setSrc(src); return; }
-      applyPlay(src);
+      play(src);
     },
     playNoDmgSameOrRandom(){
       // すでにノーダメージ曲が流れていればそのまま
-      if(bgmStarted && audio && !audio.paused && NODMG_SRCS.includes(currentSrc)) return;
+      if(NODMG_SRCS.includes(currentSrc) && audio && !audio.paused) return;
       this.playNoDmg();
     },
   };
 })();
 
-// 通常 BGM を「流したい曲」としてセット（実際の再生は最初のタッチ時）
-BGM.playNormal();
+// BGM はタイトルボタン押下時に再生開始する
 
 
 // ══════════════════════════════════════════════
 // MAIN LOOP
 // ══════════════════════════════════════════════
-let last=0;
+// ── Title screen ──
+let gameStarted = false;
+let last = 0;
+
+function startGame(nodmg){
+  if(gameStarted) return;
+  gameStarted = true;
+  document.getElementById('title-screen').style.display = 'none';
+  if(nodmg){ G.player.hp = 1; G.player.maxHp = 1; updateBars(); }
+  requestAnimationFrame(loop);
+}
+
+document.getElementById('title-start').addEventListener('click', ()=>{
+  BGM.playNormal(); // ボタン押下 = ユーザー操作 → Chrome/Safari ともに再生可
+  startGame(false);
+});
+document.getElementById('title-nodmg').addEventListener('click', ()=>{
+  BGM.playNoDmg();
+  startGame(true);
+});
+// touch も同様に対応
+document.getElementById('title-start').addEventListener('touchstart', e=>{
+  e.preventDefault();
+  BGM.playNormal();
+  startGame(false);
+}, {passive:false});
+document.getElementById('title-nodmg').addEventListener('touchstart', e=>{
+  e.preventDefault();
+  BGM.playNoDmg();
+  startGame(true);
+}, {passive:false});
+
 function loop(ts){
   requestAnimationFrame(loop);
   const dt=Math.min((ts-last)*.001,.05);last=ts;
@@ -1353,8 +1375,6 @@ function loop(ts){
   updateDebug();
   renderer.render(scene,camera);
 }
-requestAnimationFrame(loop);
-
 window.addEventListener('resize',()=>{
   renderer.setSize(innerWidth,innerHeight);
   camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();
