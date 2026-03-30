@@ -37,6 +37,10 @@ body{background:#000;overflow:hidden;width:100vw;height:100vh;touch-action:none;
 #nodmg-btn{position:fixed;top:51%;left:50%;transform:translateX(-50%);padding:9px 22px;font-family:monospace;font-size:11px;letter-spacing:2px;background:rgba(255,80,0,.15);color:#ff9966;border:1px solid rgba(255,100,0,.45);border-radius:3px;cursor:pointer;display:none;pointer-events:all;white-space:nowrap;z-index:100;}
 #nodmg-btn:hover{background:rgba(255,80,0,.28);}
 #debug-panel{position:fixed;top:8px;right:12px;pointer-events:all;text-align:right;}
+#topdown-panel{position:fixed;top:8px;left:12px;pointer-events:all;text-align:left;}
+#topdown-toggle{display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none;}
+#topdown-label{color:rgba(255,255,255,.45);font-size:9px;letter-spacing:1px;}
+#topdown-check{width:14px;height:14px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.28);border-radius:2px;display:flex;align-items:center;justify-content:center;color:#00ff88;font-size:10px;}
 #debug-toggle{display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none;}
 #debug-label{color:rgba(255,255,255,.45);font-size:9px;letter-spacing:1px;}
 #debug-check{width:14px;height:14px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.28);border-radius:2px;display:flex;align-items:center;justify-content:center;color:#00ff88;font-size:10px;}
@@ -59,6 +63,9 @@ body{background:#000;overflow:hidden;width:100vw;height:100vh;touch-action:none;
 <div id="part-hit"></div>
 <div id="stun-overlay"></div>
 <div id="msg"></div>
+<div id="topdown-panel">
+  <div id="topdown-toggle"><div id="topdown-check"></div><span id="topdown-label">見下ろし</span></div>
+</div>
 <div id="debug-panel">
   <div id="debug-toggle"><span id="debug-label">デバッグ</span><div id="debug-check"></div></div>
   <div id="debug-inv-wrap">
@@ -319,6 +326,24 @@ const dbgSpinRing=new THREE.Mesh(new THREE.RingGeometry(10.3,10.7,32),new THREE.
 dbgSpinRing.rotation.x=-Math.PI/2;dbgSpinRing.position.y=.2;dbgSpinRing.visible=false;scene.add(dbgSpinRing);
 
 // Debug UI
+// Topdown camera toggle
+let topdownOn = false;
+const tdPanel = document.getElementById('topdown-panel');
+// Top-down camera state: a soft-follow center point
+const tdCenter = new THREE.Vector3(0, 0, 0);
+const TD_HEIGHT = 32;    // camera Y
+const TD_DEADZONE = 0.28; // fraction of half-screen before camera starts moving
+const TD_FOLLOW = 0.08;  // lerp speed
+
+document.getElementById('topdown-toggle').addEventListener('click', ()=>{
+  topdownOn = !topdownOn;
+  document.getElementById('topdown-check').textContent = topdownOn ? '✓' : '';
+  if(topdownOn){
+    // Snap center to player immediately on switch
+    tdCenter.set(G.player.pos.x, 0, G.player.pos.z);
+  }
+});
+
 document.getElementById('debug-toggle').addEventListener('click',()=>{
   debugOn=!debugOn;
   document.getElementById('debug-check').textContent=debugOn?'✓':'';
@@ -469,7 +494,15 @@ function updateBars(){
 }
 function getInputX(){let x=0;if(joy.active)x=joy.dx;if(keys['a']||keys['arrowleft'])x-=1;if(keys['d']||keys['arrowright'])x+=1;return x;}
 function getInputZ(){let z=0;if(joy.active)z=joy.dy;if(keys['w']||keys['arrowup'])z-=1;if(keys['s']||keys['arrowdown'])z+=1;return z;}
-function worldDir(mx,mz){const len=Math.sqrt(mx*mx+mz*mz);if(len<.01)return null;const ca=Math.cos(camAz),sa=Math.sin(camAz);return{x:(mx/len)*ca+(mz/len)*sa,z:-(mx/len)*sa+(mz/len)*ca};}
+function worldDir(mx,mz){
+  const len=Math.sqrt(mx*mx+mz*mz);if(len<.01)return null;
+  if(topdownOn){
+    // 見下ろし時: 上=Z-, 右=X+ (カメラ回転なし・固定方向)
+    return{x:mx/len, z:mz/len};
+  }
+  const ca=Math.cos(camAz),sa=Math.sin(camAz);
+  return{x:(mx/len)*ca+(mz/len)*sa,z:-(mx/len)*sa+(mz/len)*ca};
+}
 function updateDirFromStick(){const P=G.player;const d=worldDir(getInputX(),getInputZ());if(d)P.rot=Math.atan2(d.x,d.z);}
 
 // ══════════════════════════════════════════════
@@ -1255,15 +1288,41 @@ function animWyvern(dt){
 // ══════════════════════════════════════════════
 function updateCamera(){
   const P=G.player;
-  const tx=P.pos.x+Math.sin(camAz)*Math.cos(camEl)*CAM_DIST;
-  const ty=P.pos.y+Math.sin(camEl)*CAM_DIST;
-  const tz=P.pos.z+Math.cos(camAz)*Math.cos(camEl)*CAM_DIST;
-  camera.position.x+=(tx-camera.position.x)*.12;
-  camera.position.y+=(ty-camera.position.y)*.12;
-  camera.position.z+=(tz-camera.position.z)*.12;
-  const lx=P.pos.x+(G.enemy.pos.x-P.pos.x)*.3;
-  const lz=P.pos.z+(G.enemy.pos.z-P.pos.z)*.3;
-  camera.lookAt(lx,1.4,lz);
+  if(topdownOn){
+    // ── 見下ろしカメラ ──
+    // プレイヤーがビュー中心から一定割合以上離れたらセンターを追従
+    const hW=innerWidth/2, hH=innerHeight/2;
+    // ワールド座標→スクリーン座標の投影でプレイヤーがどの辺にいるか判断
+    // 簡易的にワールドXZ上の差分で判定
+    const dx=P.pos.x-tdCenter.x, dz=P.pos.z-tdCenter.z;
+    // 見下ろしY=TD_HEIGHTでの水平FOVからワールド単位あたりの画面割合を算出
+    const fovRad=camera.fov*Math.PI/180;
+    const viewH=2*Math.tan(fovRad/2)*TD_HEIGHT; // 画面高さに対応するワールド幅
+    const viewW=viewH*camera.aspect;
+    const halfW=viewW/2, halfH=viewH/2;
+    const deadX=halfW*TD_DEADZONE, deadZ=halfH*TD_DEADZONE;
+    if(Math.abs(dx)>deadX) tdCenter.x+=(Math.abs(dx)-deadX)*Math.sign(dx)*TD_FOLLOW*3;
+    if(Math.abs(dz)>deadZ) tdCenter.z+=(Math.abs(dz)-deadZ)*Math.sign(dz)*TD_FOLLOW*3;
+    // カメラを中心の真上に配置、真下を向く
+    camera.position.x+=(tdCenter.x-camera.position.x)*.14;
+    camera.position.y+=(TD_HEIGHT-camera.position.y)*.14;
+    camera.position.z+=(tdCenter.z-camera.position.z)*.14;
+    camera.lookAt(camera.position.x, 0, camera.position.z);
+    // 回転固定: 上方向をZ-に向ける（northup）
+    camera.up.set(0,0,-1);
+  }else{
+    // ── 通常軌道カメラ ──
+    camera.up.set(0,1,0);
+    const tx=P.pos.x+Math.sin(camAz)*Math.cos(camEl)*CAM_DIST;
+    const ty=P.pos.y+Math.sin(camEl)*CAM_DIST;
+    const tz=P.pos.z+Math.cos(camAz)*Math.cos(camEl)*CAM_DIST;
+    camera.position.x+=(tx-camera.position.x)*.12;
+    camera.position.y+=(ty-camera.position.y)*.12;
+    camera.position.z+=(tz-camera.position.z)*.12;
+    const lx=P.pos.x+(G.enemy.pos.x-P.pos.x)*.3;
+    const lz=P.pos.z+(G.enemy.pos.z-P.pos.z)*.3;
+    camera.lookAt(lx,1.4,lz);
+  }
 }
 
 // ══════════════════════════════════════════════
